@@ -1,0 +1,8 @@
+__pycache__/
+.claude/
+.playwright-mcp/
+*.log
+.env
+spreads.db
+spreads.db-wal
+spreads.db-shm
