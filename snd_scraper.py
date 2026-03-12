@@ -23,7 +23,7 @@ SND_BASE_URL = (
 # Padrão brasileiro: 1.000,000000 → usar vírgula como decimal
 _RE_MERCADO = re.compile(r"Mercado:</b>\s*([\d.]+)")
 _RE_VNA = re.compile(r"Nominal\s+em\s+\d{2}/\d{2}/\d{4}:</b>\s*R\$\s*([\d.,]+)")
-_RE_SPREAD = re.compile(r"Juros/Spread:</b>\s*([\d.,]+)")
+_RE_SPREAD = re.compile(r"Juros/Spread:</b>\s*</td>\s*<td[^>]*>\s*([\d.,]+)")
 
 
 def _parse_br_number(s: str) -> float:
