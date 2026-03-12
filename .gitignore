@@ -6,3 +6,4 @@ __pycache__/
 spreads.db
 spreads.db-wal
 spreads.db-shm
+.DS_Store
