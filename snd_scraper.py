@@ -23,6 +23,7 @@ SND_BASE_URL = (
 # Padrão brasileiro: 1.000,000000 → usar vírgula como decimal
 _RE_MERCADO = re.compile(r"Mercado:</b>\s*([\d.]+)")
 _RE_VNA = re.compile(r"Nominal\s+em\s+\d{2}/\d{2}/\d{4}:</b>\s*R\$\s*([\d.,]+)")
+_RE_SPREAD = re.compile(r"Juros/Spread:</b>\s*([\d.,]+)")
 
 
 def _parse_br_number(s: str) -> float:
@@ -58,11 +59,16 @@ def fetch_volume(codigo: str) -> dict | None:
     vna = _parse_br_number(m_vna.group(1))
     volume = quantidade * vna
 
+    # Spread de emissão (Taxa de Juros/Spread)
+    m_spread = _RE_SPREAD.search(html)
+    spread_emissao = _parse_br_number(m_spread.group(1)) if m_spread else None
+
     return {
         "codigo": codigo,
         "quantidade_mercado": quantidade,
         "vna": vna,
         "volume_outstanding": volume,
+        "spread_emissao": spread_emissao,
         "updated_at": datetime.now().isoformat(),
     }
 

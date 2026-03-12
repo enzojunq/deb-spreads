@@ -17,28 +17,22 @@ logger = logging.getLogger(__name__)
 TELEGRAM_MAX_LENGTH = 4096
 
 
-def _estimate_savings(old_rate: float, new_rate: float, notional: float) -> float:
-    """Estima economia anual em R$ com base na variação do spread."""
-    delta = abs(old_rate - new_rate) / 100  # converter de % para decimal
-    return delta * notional
-
-
 def _analyze_refinancing(
-    old_rate: float,
-    new_rate: float,
+    emission_rate: float,
+    current_rate: float,
     duration: float | None,
     volume: float,
 ) -> dict:
     """
-    Analisa viabilidade de refinanciamento usando:
-    ganho_bruto = (spread_antigo - spread_novo) × duration × volume
+    Analisa viabilidade de refinanciamento usando spread de emissão real.
+    ganho_bruto = (spread_emissão - spread_atual) × duration_years × volume
     custo_total = (emissão% + resgate%) × volume
     """
     if duration is None or duration <= 0:
         return {"viable": None}
 
     duration_years = duration / 252  # ANBIMA publica em dias úteis
-    delta_pct = (old_rate - new_rate) / 100  # de % para decimal
+    delta_pct = (emission_rate - current_rate) / 100  # de % para decimal
     gross_saving = delta_pct * duration_years * volume
 
     emission_cost = (config.REFINANCE_EMISSION_COST_PCT / 100) * volume
@@ -54,7 +48,26 @@ def _analyze_refinancing(
         "call_premium": call_premium,
         "total_cost": total_cost,
         "net_saving": net_saving,
+        "compression": emission_rate - current_rate,
     }
+
+
+def _calc_breakeven_spread(
+    current_rate: float,
+    duration: float | None,
+    volume: float,
+) -> float | None:
+    """Calcula spread mínimo de emissão para que refinanciamento compense."""
+    if duration is None or duration <= 0 or volume <= 0:
+        return None
+
+    duration_years = duration / 252
+    total_cost_pct = config.REFINANCE_EMISSION_COST_PCT + config.REFINANCE_CALL_PREMIUM_PCT
+    total_cost = (total_cost_pct / 100) * volume
+
+    # breakeven: (spread_emissao - current_rate)/100 * duration_years * volume = total_cost
+    # spread_emissao = current_rate + (total_cost / (duration_years * volume)) * 100
+    return current_rate + (total_cost / (duration_years * volume)) * 100
 
 
 def _fmt_brl(value: float) -> str:
@@ -137,6 +150,7 @@ def format_alert_message(drops: pd.DataFrame) -> list[str]:
     )
 
     entries = []
+    any_viable = False
     for _, row in drops.iterrows():
         nome = html.escape(str(row["nome"]))
         codigo = row["codigo"]
@@ -194,30 +208,43 @@ def format_alert_message(drops: pd.DataFrame) -> list[str]:
         notional = volume_real if has_real_volume else config.REFINANCE_NOTIONAL
         duration_val = row.get("duration") if pd.notna(row.get("duration")) else None
         vol_label = _fmt_notional(notional)
+        spread_emissao = db.get_spread_emissao(codigo)
 
-        refi = _analyze_refinancing(taxa_ant, taxa_hoje, duration_val, notional)
+        if spread_emissao is not None:
+            compression = spread_emissao - taxa_hoje
+            entry += f"   📋 Emissão: DI+{spread_emissao:.2f}% → Atual: DI+{taxa_hoje:.4f}%"
+            if compression > 0:
+                entry += f" (compressão de {compression:.2f}%)\n"
+            else:
+                entry += f" (abertura de {abs(compression):.2f}%)\n"
 
-        if refi["viable"] is not None:
-            if has_real_volume:
-                entry += f"   💰 <b>Refinanciamento</b> (vol: {vol_label}):\n"
+            if taxa_hoje >= spread_emissao:
+                entry += "   ⚠️ Spread ABRIU vs emissão — refinanciamento não indicado\n"
             else:
-                entry += f"   💰 <b>Refinanciamento</b> (vol est: {vol_label}):\n"
-            entry += f"      Ganho bruto: {_fmt_brl(refi['gross_saving'])}"
-            entry += f" | Custos: {_fmt_brl(refi['total_cost'])}\n"
-            entry += f"      Líquido: {_fmt_brl(refi['net_saving'])}"
-            if refi["viable"]:
-                entry += " ✅ VIÁVEL\n"
-            else:
-                entry += " ❌ NÃO COMPENSA\n"
+                refi = _analyze_refinancing(spread_emissao, taxa_hoje, duration_val, notional)
+                if refi["viable"] is not None:
+                    vol_prefix = "vol" if has_real_volume else "vol est"
+                    entry += f"   💰 <b>Refinanciamento</b> ({vol_prefix}: {vol_label}):\n"
+                    entry += f"      Ganho bruto: {_fmt_brl(refi['gross_saving'])}"
+                    entry += f" | Custos: {_fmt_brl(refi['total_cost'])}\n"
+                    entry += f"      Líquido: {_fmt_brl(refi['net_saving'])}"
+                    if refi["viable"]:
+                        entry += " ✅ VIÁVEL\n"
+                        any_viable = True
+                    else:
+                        entry += " ❌ NÃO COMPENSA\n"
         else:
-            savings = _estimate_savings(taxa_ant, taxa_hoje, notional)
-            if savings > 0:
-                label = vol_label if has_real_volume else f"est. {vol_label}"
-                entry += f"   💰 Economia: ~{_fmt_brl(savings)}/ano ({label}) — sem duration p/ análise completa\n"
+            # Sem spread de emissão — mostrar breakeven
+            breakeven = _calc_breakeven_spread(taxa_hoje, duration_val, notional)
+            if breakeven is not None:
+                entry += f"   💰 Spread emissão indisponível — compensa se emitiu acima de DI+{breakeven:.2f}%\n"
 
         entries.append(entry)
 
-    footer = "\n💡 <i>Oportunidade de refinanciamento — spread caiu no secundário!</i>"
+    if any_viable:
+        footer = "\n💡 <i>Oportunidade de refinanciamento — spread comprimiu vs emissão!</i>"
+    else:
+        footer = ""
 
     # Dividir em múltiplas mensagens se necessário
     messages = []

@@ -50,9 +50,18 @@ def init_db():
                 quantidade_mercado INTEGER,
                 vna REAL,
                 volume_outstanding REAL,
+                spread_emissao REAL,
                 updated_at TEXT
             )
         """)
+
+        # Migração: adicionar spread_emissao se não existir
+        snd_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(snd_volumes)").fetchall()
+        }
+        if "spread_emissao" not in snd_cols:
+            conn.execute("ALTER TABLE snd_volumes ADD COLUMN spread_emissao REAL")
+            logger.info("Migração: coluna 'spread_emissao' adicionada à tabela snd_volumes")
 
         # Tabela de spreads
         conn.execute("""
@@ -272,17 +281,19 @@ def save_volumes(df: pd.DataFrame):
 
     with get_connection() as conn:
         for _, row in df.iterrows():
+            spread_em = float(row["spread_emissao"]) if pd.notna(row.get("spread_emissao")) else None
             conn.execute(
                 """
                 INSERT OR REPLACE INTO snd_volumes
-                    (codigo, quantidade_mercado, vna, volume_outstanding, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                    (codigo, quantidade_mercado, vna, volume_outstanding, spread_emissao, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["codigo"],
                     int(row["quantidade_mercado"]),
                     float(row["vna"]),
                     float(row["volume_outstanding"]),
+                    spread_em,
                     row["updated_at"],
                 ),
             )
@@ -294,6 +305,16 @@ def get_volume(codigo: str) -> float | None:
     with get_connection() as conn:
         row = conn.execute(
             "SELECT volume_outstanding FROM snd_volumes WHERE codigo = ?",
+            (codigo,),
+        ).fetchone()
+    return row[0] if row else None
+
+
+def get_spread_emissao(codigo: str) -> float | None:
+    """Retorna spread de emissão de um código, ou None se não existir."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT spread_emissao FROM snd_volumes WHERE codigo = ?",
             (codigo,),
         ).fetchone()
     return row[0] if row else None
