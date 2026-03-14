@@ -210,9 +210,10 @@ def format_alert_message(drops: pd.DataFrame) -> list[str]:
         vol_label = _fmt_notional(notional)
         spread_emissao = db.get_spread_emissao(codigo)
 
+        idx_label = row.get("indexador", "DI")
         if spread_emissao is not None:
             compression = spread_emissao - taxa_hoje
-            entry += f"   📋 Emissão: DI+{spread_emissao:.2f}% → Atual: DI+{taxa_hoje:.4f}%"
+            entry += f"   📋 Emissão: {idx_label}+{spread_emissao:.2f}% → Atual: {idx_label}+{taxa_hoje:.4f}%"
             if compression > 0:
                 entry += f" (compressão de {compression:.2f}%)\n"
             else:
@@ -237,7 +238,7 @@ def format_alert_message(drops: pd.DataFrame) -> list[str]:
             # Sem spread de emissão — mostrar breakeven
             breakeven = _calc_breakeven_spread(taxa_hoje, duration_val, notional)
             if breakeven is not None:
-                entry += f"   💰 Spread emissão indisponível — compensa se emitiu acima de DI+{breakeven:.2f}%\n"
+                entry += f"   💰 Spread emissão indisponível — compensa se emitiu acima de {idx_label}+{breakeven:.2f}%\n"
 
         entries.append(entry)
 
